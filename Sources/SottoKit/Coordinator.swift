@@ -255,6 +255,37 @@ final class Coordinator {
         hud.show(.recording(level: level, partial: partial))
     }
 
+    // MARK: - Debug entry points (SOTTO_DEBUG=1 only)
+
+    /// Runs the delivery half of the pipeline against the frontmost app.
+    func debugInject(_ text: String) {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return }
+        machine = DictationMachine(state: .transcribing(target: app.processIdentifier))
+        run(machine.handle(.transcriptReady(text)))
+    }
+
+    /// Runs the whole pipeline with a recorded file standing in for the
+    /// microphone: transcribe, clean up, then insert into the frontmost app.
+    func debugDictate(fileURL: URL) {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return }
+        Log.dictation.info(
+            "debug: target \(app.localizedName ?? "?", privacy: .public) (\(app.processIdentifier))")
+        machine = DictationMachine(state: .transcribing(target: app.processIdentifier))
+        status = .working
+        applySettings()
+        Task { @MainActor in
+            do {
+                let raw = try await speech.transcribe(fileURL: fileURL)
+                Log.dictation.info("debug raw: \(raw, privacy: .public)")
+                let text = await refiner.refine(raw, vocabulary: store.settings.vocabulary.terms)
+                Log.dictation.info("debug cleaned: \(text, privacy: .public)")
+                run(machine.handle(.transcriptReady(text)))
+            } catch {
+                run(machine.handle(.abort(.transcriptionFailed(error.localizedDescription))))
+            }
+        }
+    }
+
     // MARK: - Diagnostics for the settings window
 
     var refinerAvailable: Bool { refiner.isAvailable }

@@ -140,6 +140,28 @@ Watch the running app:
 log stream --predicate 'subsystem == "com.langsdorf.sotto"' --level debug
 ```
 
+### Driving the app without the keyboard
+
+The hotkey path cannot be exercised from a script — synthesizing a keypress
+needs Accessibility for the *posting* process. Instead the app can be driven
+directly when launched with `SOTTO_DEBUG=1`:
+
+```bash
+open --env SOTTO_DEBUG=1 build/Sotto.app
+```
+
+It then listens for two distributed notifications, which run the real delivery
+and transcription paths rather than a parallel test-only one:
+
+| Notification | userInfo | Effect |
+| --- | --- | --- |
+| `com.langsdorf.sotto.debug.injectText` | `text` | Insert that text into the frontmost app |
+| `com.langsdorf.sotto.debug.dictateFile` | `path` | Transcribe a WAV, clean it up, insert it |
+
+This is off unless the environment variable is set — it posts synthesized
+keystrokes into whatever is frontmost, which no normally-launched build should
+expose.
+
 ### Manual smoke checklist
 
 Paste behaviour is per-app and cannot be faked, so after any change to the

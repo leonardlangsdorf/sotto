@@ -23,12 +23,14 @@ final class DictationRefiner: Refining {
     var maximumWait: TimeInterval = 20
     var isEnabled = true
 
-    /// Generation cost scales with output length — measured at roughly 0.4s
-    /// per word on this hardware, with 0.6 giving headroom. A fixed timeout
-    /// either fails every long dictation or wastes time on every short one.
-    static let secondsPerWord = 0.6
+    /// Generation cost scales with output length. Measured between 0.4s and
+    /// 1.2s per word depending on model warmth, so the coefficient is set to
+    /// the pessimistic end: a deadline that expires just before the model
+    /// would have finished is the worst outcome, because the wait is spent and
+    /// the result is thrown away.
+    nonisolated static let secondsPerWord = 1.2
     /// Even a three-word transcript needs room for the model to respond.
-    static let minimumWait: TimeInterval = 3
+    nonisolated static let minimumWait: TimeInterval = 8
 
     nonisolated static func timeout(forWordCount words: Int, maximumWait: TimeInterval) -> TimeInterval {
         let scaled = Double(words) * secondsPerWord
@@ -71,35 +73,73 @@ final class DictationRefiner: Refining {
         guard isEnabled, isAvailable, !transcript.isEmpty else { return transcript }
 
         let session = self.session ?? makeSession()
-        var prompt = "Rewrite this dictation:\n\n\(transcript)"
-        if !vocabulary.isEmpty {
-            prompt += "\n\nKnown vocabulary (preserve spelling): \(vocabulary.joined(separator: ", "))"
-        }
+        let vocabularyNote = vocabulary.isEmpty
+            ? ""
+            : "\n\nKnown vocabulary (preserve spelling): \(vocabulary.joined(separator: ", "))"
+        let prompt = "Rewrite this dictation:\n\n\(transcript)\(vocabularyNote)"
 
-        let work = Task {
-            try await session.respond(
-                to: prompt,
-                generating: CleanedDictation.self,
-                options: GenerationOptions(temperature: 0.2)
-            ).content.cleanedText
-        }
         let deadline = Self.timeout(
             forWordCount: transcript.split(separator: " ").count,
             maximumWait: maximumWait)
-        let watchdog = Task {
-            try? await Task.sleep(for: .seconds(deadline))
-            work.cancel()
-        }
+
         defer {
-            watchdog.cancel()
             // Start each dictation from a clean context so the session's
             // transcript cannot grow without bound across a long day.
             self.session = nil
             if isAvailable { self.session = makeSession() }
         }
 
-        guard let cleaned = try? await work.value else { return transcript }
+        let cleaned = await Self.firstOf(deadline: deadline) {
+            try await session.respond(
+                to: prompt,
+                generating: CleanedDictation.self,
+                options: GenerationOptions(temperature: 0.2)
+            ).content.cleanedText
+        }
+
+        guard let cleaned else { return transcript }
         return Self.isPlausibleRewrite(cleaned, of: transcript) ? cleaned : transcript
+    }
+
+    /// Returns the operation's result, or nil once `deadline` passes.
+    ///
+    /// `Task.cancel()` alone does not bound this wait: a `FoundationModels`
+    /// request in flight does not unwind promptly on cancellation, so awaiting
+    /// the cancelled task still blocks until generation finishes. Racing the
+    /// work against a sleep and returning whichever lands first is what
+    /// actually caps the latency. The losing request is cancelled and left to
+    /// unwind on its own.
+    nonisolated private static func firstOf(
+        deadline: TimeInterval,
+        operation: @escaping @Sendable () async throws -> String
+    ) async -> String? {
+        final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var continuation: CheckedContinuation<String?, Never>?
+            init(_ continuation: CheckedContinuation<String?, Never>) {
+                self.continuation = continuation
+            }
+            func resume(_ value: String?) {
+                lock.lock()
+                let pending = continuation
+                continuation = nil
+                lock.unlock()
+                pending?.resume(returning: value)
+            }
+        }
+
+        return await withCheckedContinuation { continuation in
+            let once = Once(continuation)
+            let request = Task {
+                let result = try? await operation()
+                once.resume(result)
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(deadline))
+                request.cancel()
+                once.resume(nil)
+            }
+        }
     }
 
     private func makeSession() -> LanguageModelSession {

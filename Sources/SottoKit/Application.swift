@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBar = MenuBarController()
     private let settingsWindow = SettingsWindowController()
     private lazy var settingsModel = SettingsModel(store: store)
+    private var debugBridge: DebugBridge?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settingsModel.onChange = { [weak self] in self?.coordinator.applySettings() }
@@ -26,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         coordinator.onStatusChange = { [weak self] status in self?.menuBar.update(status) }
         menuBar.update(coordinator.status)
+
+        debugBridge = DebugBridge(coordinator: coordinator)
 
         Task { await coordinator.start() }
     }
