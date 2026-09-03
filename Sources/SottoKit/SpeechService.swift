@@ -227,13 +227,16 @@ final class SpeechService: Transcribing {
             guard let converted = AVAudioPCMBuffer(
                 pcmFormat: target, frameCapacity: capacity) else { break }
 
+            // The callback is @Sendable but runs synchronously inside convert(),
+            // so handing it the buffer is safe.
+            nonisolated(unsafe) let source = input
             var supplied = false
             var error: NSError?
             converter.convert(to: converted, error: &error) { _, status in
                 if supplied { status.pointee = .noDataNow; return nil }
                 supplied = true
                 status.pointee = .haveData
-                return input
+                return source
             }
             if converted.frameLength > 0 { output.append(converted) }
         }

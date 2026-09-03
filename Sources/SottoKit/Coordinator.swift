@@ -272,6 +272,7 @@ final class Coordinator {
             "debug: target \(app.localizedName ?? "?", privacy: .public) (\(app.processIdentifier))")
         machine = DictationMachine(state: .transcribing(target: app.processIdentifier))
         status = .working
+        hud.show(.transcribing)
         applySettings()
         Task { @MainActor in
             do {

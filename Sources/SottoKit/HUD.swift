@@ -28,7 +28,8 @@ final class HUDController {
     private let panel: NSPanel
     private var dismissTask: Task<Void, Never>?
 
-    private static let size = NSSize(width: 280, height: 46)
+    /// Roomy enough for the glow and the scale-in to render without clipping.
+    static let size = NSSize(width: 260, height: 92)
 
     init() {
         panel = NonActivatingPanel(
@@ -41,7 +42,7 @@ final class HUDController {
         panel.level = .statusBar
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false  // the view draws its own, so the glow isn't boxed
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
@@ -71,77 +72,189 @@ final class HUDController {
         panel.orderOut(nil)
     }
 
+    /// Parked at the bottom of the active screen rather than chasing the caret.
+    ///
+    /// A fixed spot is easier to read at a glance than one that moves per app —
+    /// you learn where to look once instead of hunting for it every time.
     private func reposition() {
-        let size = Self.size
-        if let caret = CaretLocator.caretPoint() {
-            panel.setFrameOrigin(NSPoint(x: caret.x, y: caret.y - size.height - 8))
-            return
-        }
-        // Fall back to bottom-centre of the screen holding the pointer.
         let screen = NSScreen.screens.first {
             NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
         } ?? NSScreen.main
         guard let frame = screen?.visibleFrame else { return }
-        panel.setFrameOrigin(
-            NSPoint(x: frame.midX - size.width / 2, y: frame.minY + 90))
+        panel.setFrame(
+            NSRect(
+                x: frame.midX - Self.size.width / 2,
+                y: frame.minY + 72,
+                width: Self.size.width,
+                height: Self.size.height),
+            display: false)
     }
 }
 
-private struct HUDView: View {
+// MARK: - View
+
+struct HUDView: View {
     @Bindable var model: HUDModel
+    @State private var appeared: Bool
+
+    init(model: HUDModel) {
+        self.model = model
+        // Already-live state means this is a static render, not a fresh show.
+        _appeared = State(initialValue: model.state != .hidden)
+    }
 
     var body: some View {
-        HStack(spacing: 10) {
-            switch model.state {
-            case .hidden:
-                EmptyView()
-            case .recording(let level, let partial):
-                LevelMeter(level: level)
-                Text(partial.isEmpty ? "Listening…" : partial)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .foregroundStyle(partial.isEmpty ? .secondary : .primary)
-            case .transcribing:
-                ProgressView().controlSize(.small)
-                Text("Transcribing…").foregroundStyle(.secondary)
-            case .message(let text):
-                Image(systemName: "exclamationmark.circle")
-                    .foregroundStyle(.secondary)
-                Text(text).lineLimit(1).foregroundStyle(.secondary)
+        pill
+            .scaleEffect(appeared ? 1 : 0.86)
+            .opacity(appeared ? 1 : 0)
+            .animation(.spring(response: 0.32, dampingFraction: 0.7), value: appeared)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { appeared = true }
+            .onChange(of: model.state) { _, new in
+                appeared = new != .hidden
             }
-            Spacer(minLength: 0)
+    }
+
+    private var pill: some View {
+        HStack(spacing: 11) {
+            leading
+            label
         }
-        .font(.system(size: 13))
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.separator, lineWidth: 0.5))
+        .font(.system(size: 13, weight: .medium))
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+        .background {
+            ZStack {
+                // Deliberately dark in both themes. This is an overlay floating
+                // over someone else's window, not a document — a light chip
+                // disappears against light content.
+                Capsule(style: .continuous)
+                    .fill(Color.black.opacity(0.82))
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(0.10), .white.opacity(0.02)],
+                            startPoint: .top,
+                            endPoint: .bottom))
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(0.22),
+                                accent.opacity(isLive ? 0.30 : 0.06),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom),
+                        lineWidth: 1)
+            }
+            .compositingGroup()
+            .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+        }
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var leading: some View {
+        switch model.state {
+        case .recording(let level, _):
+            Waveform(level: level, accent: accent)
+        case .transcribing:
+            Waveform(level: 0, accent: accent, thinking: true)
+        case .message:
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(.white.opacity(0.5))
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        switch model.state {
+        case .recording(_, let partial):
+            Text(partial.isEmpty ? "Listening" : partial)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .foregroundStyle(.white.opacity(partial.isEmpty ? 0.55 : 0.95))
+                .frame(maxWidth: 150, alignment: .leading)
+        case .transcribing:
+            Text("Transcribing")
+                .foregroundStyle(.white.opacity(0.55))
+        case .message(let text):
+            Text(text)
+                .lineLimit(1)
+                .foregroundStyle(.white.opacity(0.65))
+                .frame(maxWidth: 170, alignment: .leading)
+        case .hidden:
+            EmptyView()
+        }
+        // Fixed metrics: a pill that resizes on every partial result is worse
+        // to look at than one that stays put.
+    }
+
+    private var isLive: Bool {
+        if case .recording = model.state { return true }
+        if case .transcribing = model.state { return true }
+        return false
+    }
+
+    private var accent: Color {
+        switch model.state {
+        case .recording: return Color(red: 1.0, green: 0.29, blue: 0.31)
+        case .transcribing: return Color(red: 0.38, green: 0.68, blue: 1.0)
+        default: return .white
+        }
     }
 }
 
-/// Seven bars rising from the centre, driven by input level.
-private struct LevelMeter: View {
+/// Bars driven by live input level, with per-bar phase so the motion looks
+/// organic rather than a synchronised bounce.
+///
+/// `TimelineView` drives the animation independently of level updates, so the
+/// waveform keeps breathing between audio callbacks instead of stepping.
+struct Waveform: View {
     let level: Double
-    private static let bars = 7
+    let accent: Color
+    var thinking = false
+
+    private static let barCount = 5
+    private static let barWidth: Double = 3
+    private static let maxHeight: Double = 22
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<Self.bars, id: \.self) { index in
-                Capsule()
-                    .fill(.red)
-                    .frame(width: 2.5, height: height(for: index))
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 3) {
+                ForEach(0..<Self.barCount, id: \.self) { index in
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [accent, accent.opacity(0.62)],
+                                startPoint: .top,
+                                endPoint: .bottom))
+                        .frame(width: Self.barWidth, height: height(index, time))
+                }
             }
+            .frame(width: 30, height: Self.maxHeight)
         }
-        .frame(width: 26, height: 18)
-        .animation(.linear(duration: 0.08), value: level)
     }
 
-    private func height(for index: Int) -> Double {
-        let centre = Double(Self.bars - 1) / 2
-        let falloff = 1 - abs(Double(index) - centre) / (centre + 1)
-        return max(3, 18 * level.clamped(to: 0...1) * falloff)
+    private func height(_ index: Int, _ time: TimeInterval) -> Double {
+        let phase = Double(index) * 0.7
+
+        if thinking {
+            // A wave travelling left to right while the model works.
+            let travel = sin(time * 4 - phase)
+            return 4 + 8 * (travel + 1) / 2
+        }
+
+        // Taller in the middle, so quiet speech still reads as a voice shape.
+        let centre = Double(Self.barCount - 1) / 2
+        let profile = 1 - abs(Double(index) - centre) / (centre + 1.4)
+        let wobble = (sin(time * 9 + phase) + 1) / 2
+        let energy = max(0.06, level.clamped(to: 0...1))
+        return 4 + (Self.maxHeight - 4) * energy * profile * (0.55 + 0.45 * wobble)
     }
 }
 
