@@ -41,9 +41,19 @@ ad-hoc-signed binary gets a new identity on every rebuild, so macOS silently
 revokes the grant and the hotkey stops working with no error and no log line.
 
 `Scripts/create-signing-identity.sh` creates a self-signed code signing
-certificate in your login keychain so the signature stays stable across
-rebuilds. It runs once and prompts for your password when trusting the
-certificate. To undo it, delete "Sotto Local Signing" in Keychain Access.
+certificate in your login keychain. Signing with a certificate makes the
+designated requirement
+
+```
+identifier "com.langsdorf.sotto" and certificate leaf = H"<cert hash>"
+```
+
+which stays identical across rebuilds even as the binary's cdhash changes — and
+that is what TCC keys on, so the Accessibility grant persists.
+
+The certificate does not need to be trusted by the system, so this needs no
+admin password. macOS may show one keychain prompt for your login password. To
+undo it, delete "Sotto Local Signing" in Keychain Access.
 
 If you have an Apple Developer certificate, `Scripts/build.sh` picks it up
 automatically, or set `SOTTO_SIGN_IDENTITY` to choose one.

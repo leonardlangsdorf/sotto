@@ -2,21 +2,32 @@
 # Builds Sotto.app.
 #
 # Accessibility permission is granted to a code *signature*, not a path. If this
-# script has to fall back to ad-hoc signing, every rebuild produces a new
-# identity and macOS silently revokes the grant — the hotkey stops working with
-# no error. Run Scripts/create-signing-identity.sh once to avoid that.
+# script falls back to ad-hoc signing, every rebuild produces a new identity and
+# macOS silently revokes the grant — the hotkey stops working with no error and
+# no log line. Run Scripts/create-signing-identity.sh once to avoid that.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 BUNDLE_ID="com.langsdorf.sotto"
+LOCAL_IDENTITY="Sotto Local Signing"
 
-IDENTITY="${SOTTO_SIGN_IDENTITY:-}"
-if [[ -z "$IDENTITY" ]]; then
-    IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-        | grep -oE '"[^"]+"' | head -1 | tr -d '"' || true)
-fi
+pick_identity() {
+    if [[ -n "${SOTTO_SIGN_IDENTITY:-}" ]]; then
+        echo "$SOTTO_SIGN_IDENTITY"
+        return
+    fi
+    # Our self-signed cert is deliberately untrusted, so it appears under
+    # "Matching identities" but not "Valid identities only" — hence no -v here.
+    if security find-identity -p codesigning 2>/dev/null | grep -q "$LOCAL_IDENTITY"; then
+        echo "$LOCAL_IDENTITY"
+        return
+    fi
+    security find-identity -v -p codesigning 2>/dev/null \
+        | grep -oE '"[^"]+"' | head -1 | tr -d '"'
+}
 
+IDENTITY="$(pick_identity)"
 if [[ -z "$IDENTITY" ]]; then
     IDENTITY="-"
     echo "warning: no code signing identity found; signing ad-hoc."
@@ -41,4 +52,4 @@ codesign --force --sign "$IDENTITY" \
     "$APP"
 
 echo "Built $APP  (signed with: $IDENTITY)"
-codesign -dv "$APP" 2>&1 | grep -E "Identifier|TeamIdentifier|Signature" || true
+codesign -d -r- "$APP" 2>&1 | grep "designated" || true
