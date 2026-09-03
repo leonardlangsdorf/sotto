@@ -18,36 +18,41 @@ public enum InsertionMethod: String, Codable, CaseIterable, Sendable {
 
 public struct Settings: Codable, Equatable, Sendable {
     /// Run the transcript through the on-device LLM before inserting.
+    ///
+    /// Off by default: cleanup costs roughly 0.6s per word of output, so a
+    /// long dictation would sit on "Transcribing…" for many seconds. The raw
+    /// transcript already arrives punctuated and capitalized.
     public var cleanupEnabled: Bool
     /// How long to wait after synthesizing paste before restoring the previous
     /// pasteboard. Too short and the target app reads stale contents.
     public var pasteboardRestoreDelay: TimeInterval
-    /// Give up on cleanup and insert the raw transcript after this long.
-    public var refineTimeout: TimeInterval
+    /// Upper bound on the cleanup wait. The actual deadline scales with the
+    /// length of the transcript — see `DictationRefiner.timeout(forWordCount:)`.
+    public var refineMaximumWait: TimeInterval
     public var localeIdentifier: String
     public var insertionMethod: InsertionMethod
     public var vocabulary: Vocabulary
 
     public static let `default` = Settings(
-        cleanupEnabled: true,
+        cleanupEnabled: false,
         pasteboardRestoreDelay: 0.15,
-        refineTimeout: 1.5,
+        refineMaximumWait: 20,
         localeIdentifier: "en-US",
         insertionMethod: .paste,
         vocabulary: Vocabulary()
     )
 
     public init(
-        cleanupEnabled: Bool = true,
+        cleanupEnabled: Bool = false,
         pasteboardRestoreDelay: TimeInterval = 0.15,
-        refineTimeout: TimeInterval = 1.5,
+        refineMaximumWait: TimeInterval = 20,
         localeIdentifier: String = "en-US",
         insertionMethod: InsertionMethod = .paste,
         vocabulary: Vocabulary = Vocabulary()
     ) {
         self.cleanupEnabled = cleanupEnabled
         self.pasteboardRestoreDelay = pasteboardRestoreDelay
-        self.refineTimeout = refineTimeout
+        self.refineMaximumWait = refineMaximumWait
         self.localeIdentifier = localeIdentifier
         self.insertionMethod = insertionMethod
         self.vocabulary = vocabulary
@@ -59,7 +64,7 @@ public struct Settings: Codable, Equatable, Sendable {
         let d = Settings.default
         cleanupEnabled = try c.decodeIfPresent(Bool.self, forKey: .cleanupEnabled) ?? d.cleanupEnabled
         pasteboardRestoreDelay = try c.decodeIfPresent(TimeInterval.self, forKey: .pasteboardRestoreDelay) ?? d.pasteboardRestoreDelay
-        refineTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .refineTimeout) ?? d.refineTimeout
+        refineMaximumWait = try c.decodeIfPresent(TimeInterval.self, forKey: .refineMaximumWait) ?? d.refineMaximumWait
         localeIdentifier = try c.decodeIfPresent(String.self, forKey: .localeIdentifier) ?? d.localeIdentifier
         insertionMethod = try c.decodeIfPresent(InsertionMethod.self, forKey: .insertionMethod) ?? d.insertionMethod
         vocabulary = try c.decodeIfPresent(Vocabulary.self, forKey: .vocabulary) ?? d.vocabulary

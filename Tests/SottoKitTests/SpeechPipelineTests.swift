@@ -19,9 +19,12 @@ struct SpeechPipelineTests {
             forResource: name, withExtension: "wav", subdirectory: "Fixtures"))
     }
 
-    static func modelIsInstalled() async -> Bool {
-        let probe = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-        return await AssetInventory.status(forModules: [probe]) == .installed
+    /// Reserves the locale for this process, which analysis requires. Returns
+    /// false when the model has not been downloaded yet.
+    static func prepareModel() async -> Bool {
+        guard await SpeechService.isModelInstalled(locale: locale) else { return false }
+        try? await SpeechService.prepareModel(locale: locale)
+        return true
     }
 
     /// Runs a whole WAV file through `SpeechAnalyzer` and returns the finalized text.
@@ -90,7 +93,7 @@ struct SpeechPipelineTests {
 
     @Test("A recorded WAV transcribes to the words that were spoken")
     func transcribesFixture() async throws {
-        guard await Self.modelIsInstalled() else {
+        guard await Self.prepareModel() else {
             print("SKIP: en-US speech model not installed. Launch Sotto once to download it.")
             return
         }
@@ -105,7 +108,7 @@ struct SpeechPipelineTests {
 
     @Test("Cleanup strips filler without changing the message")
     func cleanupRemovesFiller() async throws {
-        guard await Self.modelIsInstalled() else {
+        guard await Self.prepareModel() else {
             print("SKIP: en-US speech model not installed.")
             return
         }
@@ -116,8 +119,10 @@ struct SpeechPipelineTests {
 
         let raw = try await Self.transcribe(try Self.fixtureURL("filler"))
         let cleaned = await MainActor.run { DictationRefiner() }
-        await MainActor.run { cleaned.timeout = 20 }  // generous: not a latency test
+        await MainActor.run { cleaned.maximumWait = 60 }  // generous: not a latency test
         let result = await cleaned.refine(raw, vocabulary: ["Sarah"])
+        print("RAW:     \(raw)")
+        print("CLEANED: \(result)")
 
         #expect(result.lowercased().contains("friday"))
         #expect(!result.lowercased().contains(" um "))
@@ -125,7 +130,7 @@ struct SpeechPipelineTests {
 
     @Test("A dictated question is transcribed, never answered")
     func questionIsNotAnswered() async throws {
-        guard await Self.modelIsInstalled() else {
+        guard await Self.prepareModel() else {
             print("SKIP: en-US speech model not installed.")
             return
         }
@@ -136,8 +141,10 @@ struct SpeechPipelineTests {
 
         let raw = try await Self.transcribe(try Self.fixtureURL("question"))
         let refiner = await MainActor.run { DictationRefiner() }
-        await MainActor.run { refiner.timeout = 20 }
+        await MainActor.run { refiner.maximumWait = 60 }
         let result = await refiner.refine(raw, vocabulary: [])
+        print("RAW:     \(raw)")
+        print("CLEANED: \(result)")
 
         #expect(result.lowercased().contains("capital"))
         #expect(

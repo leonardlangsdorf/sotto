@@ -112,7 +112,7 @@ final class Coordinator {
         speech.localeIdentifier = settings.localeIdentifier
         speech.vocabulary = settings.vocabulary.terms
         refiner.isEnabled = settings.cleanupEnabled
-        refiner.timeout = settings.refineTimeout
+        refiner.maximumWait = settings.refineMaximumWait
     }
 
     private func ensureMicrophone() async -> Bool {
@@ -125,11 +125,13 @@ final class Coordinator {
 
     private func ensureModel() async {
         let locale = Locale(identifier: store.settings.localeIdentifier)
-        if await SpeechService.isModelInstalled(locale: locale) { return }
-
-        status = .downloadingModel(fraction: 0)
+        // Only show the download UI when there is actually a download; the
+        // reservation below is instant for an already-installed model.
+        if await !SpeechService.isModelInstalled(locale: locale) {
+            status = .downloadingModel(fraction: 0)
+        }
         do {
-            try await SpeechService.installModelIfNeeded(locale: locale) { [weak self] progress in
+            try await SpeechService.prepareModel(locale: locale) { [weak self] progress in
                 self?.observe(progress)
             }
         } catch {

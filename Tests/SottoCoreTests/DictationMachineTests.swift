@@ -100,3 +100,11 @@ struct TranscriptTests {
         #expect(Transcript.assemble(["  ", "\n"]).isEmpty)
     }
 }
+
+@Suite("Settings defaults")
+struct SettingsDefaultTests {
+    @Test("Cleanup is off by default so dictation stays fast")
+    func cleanupDefaultsOff() {
+        #expect(Settings.default.cleanupEnabled == false)
+    }
+}

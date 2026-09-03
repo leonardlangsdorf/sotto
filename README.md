@@ -81,10 +81,28 @@ touches CoreGraphics, AVFoundation, Speech, and AppKit.
 The full design, including the failure modes each component handles, is in
 [docs/plans](docs/plans/2026-09-03-sotto-dictation-design.md).
 
+### Cleanup is off by default
+
+Raw transcripts arrive in about a third of a second and are already punctuated
+and capitalized. Cleanup adds filler removal and tighter phrasing, but costs
+roughly **0.4s per word of output** — a 40-word dictation would take ~16s. Turn
+it on in Settings when the text matters more than the speed.
+
+Measured on an M-series Mac:
+
+| Output length | Time |
+| --- | --- |
+| 9 words | 1.06s |
+| 11 words | 3.82s |
+| 15 words | 6.95s |
+
+The cleanup deadline scales with transcript length rather than being fixed, so
+long dictations are not cut short and short ones are not made to wait.
+
 ### Cleanup guardrails
 
-The refiner rewrites speech into writing — filler removed, punctuation added,
-your words kept. Two things stop it misbehaving:
+When enabled, the refiner rewrites speech into writing — filler removed,
+punctuation kept, your words preserved. Two things stop it misbehaving:
 
 - Dictating *"what's the capital of France"* must produce that sentence, not
   "Paris". Enforced by strict instructions plus a `@Generable` type whose only
@@ -96,7 +114,7 @@ your words kept. Two things stop it misbehaving:
 
 Menu bar ▸ Settings.
 
-- **Cleanup** — on/off, and how long to wait before giving up and inserting raw
+- **Cleanup** — on/off (default off), and the maximum wait before falling back to raw
 - **Insertion** — paste (default, works everywhere) or type characters (slower,
   never touches the clipboard)
 - **Vocabulary** — names and jargon to bias recognition toward, capped at 100.
@@ -107,7 +125,7 @@ Stored at `~/Library/Application Support/Sotto/settings.json`.
 ## Development
 
 ```bash
-swift test                 # 29 tests, no hardware needed
+swift test                 # 35 tests; speech tests need the model installed
 swift build                # just compile
 ```
 

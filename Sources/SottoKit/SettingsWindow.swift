@@ -73,14 +73,18 @@ private struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 if model.settings.cleanupEnabled {
-                    LabeledContent("Give up after") {
+                    LabeledContent("Maximum wait") {
                         Stepper(
-                            value: $model.settings.refineTimeout, in: 0.5...5, step: 0.5
+                            value: $model.settings.refineMaximumWait, in: 5...60, step: 5
                         ) {
-                            Text(String(format: "%.1f s", model.settings.refineTimeout))
+                            Text(String(format: "%.0f s", model.settings.refineMaximumWait))
                         }
                     }
-                    Text("On timeout the raw transcript is inserted instead.")
+                    Text("Cleanup removes filler and tightens phrasing, but costs roughly half a second per word — a long dictation takes several seconds. The raw transcript is inserted if it runs over.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Raw transcripts arrive in about a third of a second, already punctuated and capitalized. Turn cleanup on when you want filler words removed.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

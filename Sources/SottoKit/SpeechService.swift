@@ -39,19 +39,35 @@ final class SpeechService: Transcribing {
 
     // MARK: - Model provisioning
 
-    /// Downloads the locale's assets if needed. Several hundred megabytes, so
-    /// callers surface `progress` rather than letting it happen invisibly.
-    static func installModelIfNeeded(
+    /// Whether the locale's assets are on disk.
+    ///
+    /// Deliberately not `AssetInventory.status(forModules:)`: that reports
+    /// whether *this process* has reserved the locale, so it answers
+    /// `.supported` for an already-downloaded model and sends callers back
+    /// through the download path on every launch.
+    static func isModelInstalled(locale: Locale) async -> Bool {
+        guard let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale)
+        else { return false }
+        let target = supported.identifier(.bcp47)
+        return await SpeechTranscriber.installedLocales
+            .contains { $0.identifier(.bcp47) == target }
+    }
+
+    /// Makes the locale usable by this process: downloads the assets if they
+    /// are missing, then reserves the locale.
+    ///
+    /// Reservation is per-process and required before analysis; it is cheap
+    /// when the model is already on disk.
+    static func prepareModel(
         locale: Locale,
         progress: (@MainActor (Progress) -> Void)? = nil
     ) async throws {
-        let probe = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-
         guard await SpeechTranscriber.supportedLocale(equivalentTo: locale) != nil else {
             throw SpeechError.localeUnsupported(locale.identifier(.bcp47))
         }
 
-        if await AssetInventory.status(forModules: [probe]) != .installed {
+        if await !isModelInstalled(locale: locale) {
+            let probe = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
             guard let request = try await AssetInventory.assetInstallationRequest(
                 supporting: [probe]) else {
                 throw SpeechError.modelUnavailable
@@ -63,17 +79,12 @@ final class SpeechService: Transcribing {
         try await AssetInventory.reserve(locale: locale)
     }
 
-    static func isModelInstalled(locale: Locale) async -> Bool {
-        let probe = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-        return await AssetInventory.status(forModules: [probe]) == .installed
-    }
-
     /// Loads the model into memory ahead of the first dictation so the first
     /// hotkey press is as fast as every later one.
     func prewarm() async {
         let locale = Locale(identifier: localeIdentifier)
+        guard await Self.isModelInstalled(locale: locale) else { return }
         let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-        guard await AssetInventory.status(forModules: [transcriber]) == .installed else { return }
         let warm = SpeechAnalyzer(modules: [transcriber], options: Self.analyzerOptions)
         let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
         try? await warm.prepareToAnalyze(in: format)
@@ -90,10 +101,10 @@ final class SpeechService: Transcribing {
         fragments = []
 
         let locale = Locale(identifier: localeIdentifier)
-        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-        guard await AssetInventory.status(forModules: [transcriber]) == .installed else {
+        guard await Self.isModelInstalled(locale: locale) else {
             throw SpeechError.modelUnavailable
         }
+        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
 
         let analyzer = SpeechAnalyzer(modules: [transcriber], options: Self.analyzerOptions)
 

@@ -76,14 +76,14 @@ struct SettingsStoreTests {
         let url = tempURL()
         let store = SettingsStore(url: url)
         store.update {
-            $0.cleanupEnabled = false
+            $0.cleanupEnabled = true
             $0.pasteboardRestoreDelay = 0.4
             $0.insertionMethod = .type
             $0.vocabulary.add("Sotto")
         }
 
         let reloaded = SettingsStore(url: url).settings
-        #expect(reloaded.cleanupEnabled == false)
+        #expect(reloaded.cleanupEnabled == true)
         #expect(reloaded.pasteboardRestoreDelay == 0.4)
         #expect(reloaded.insertionMethod == .type)
         #expect(reloaded.vocabulary.terms == ["Sotto"])
@@ -94,11 +94,11 @@ struct SettingsStoreTests {
         let url = tempURL()
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(#"{"cleanupEnabled": false}"#.utf8).write(to: url)
+        try Data(#"{"cleanupEnabled": true}"#.utf8).write(to: url)
 
         let s = SettingsStore(url: url).settings
-        #expect(s.cleanupEnabled == false)
-        #expect(s.refineTimeout == Settings.default.refineTimeout)
+        #expect(s.cleanupEnabled == true)
+        #expect(s.refineMaximumWait == Settings.default.refineMaximumWait)
         #expect(s.localeIdentifier == Settings.default.localeIdentifier)
         #expect(s.insertionMethod == Settings.default.insertionMethod)
     }

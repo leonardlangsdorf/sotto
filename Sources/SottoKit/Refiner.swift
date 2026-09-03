@@ -19,8 +19,21 @@ struct CleanedDictation {
 /// cosmetic cleanup step failed would be far worse than slightly rough text.
 @MainActor
 final class DictationRefiner: Refining {
-    var timeout: TimeInterval = 1.5
+    /// Upper bound on the wait, regardless of length.
+    var maximumWait: TimeInterval = 20
     var isEnabled = true
+
+    /// Generation cost scales with output length — measured at roughly 0.4s
+    /// per word on this hardware, with 0.6 giving headroom. A fixed timeout
+    /// either fails every long dictation or wastes time on every short one.
+    static let secondsPerWord = 0.6
+    /// Even a three-word transcript needs room for the model to respond.
+    static let minimumWait: TimeInterval = 3
+
+    nonisolated static func timeout(forWordCount words: Int, maximumWait: TimeInterval) -> TimeInterval {
+        let scaled = Double(words) * secondsPerWord
+        return Swift.min(maximumWait, Swift.max(minimumWait, scaled))
+    }
 
     private var session: LanguageModelSession?
 
@@ -70,8 +83,11 @@ final class DictationRefiner: Refining {
                 options: GenerationOptions(temperature: 0.2)
             ).content.cleanedText
         }
+        let deadline = Self.timeout(
+            forWordCount: transcript.split(separator: " ").count,
+            maximumWait: maximumWait)
         let watchdog = Task {
-            try? await Task.sleep(for: .seconds(timeout))
+            try? await Task.sleep(for: .seconds(deadline))
             work.cancel()
         }
         defer {

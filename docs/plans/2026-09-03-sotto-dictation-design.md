@@ -27,7 +27,7 @@ SDK, not from memory. The API surface below matches those signatures.
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Trigger | Hold Right-⌘ (keycode 54) | Push-to-talk, no mode to forget. Left-⌘ untouched so ⌘C/⌘V/⌘T stay normal. |
-| Pipeline | Transcribe → LLM cleanup → inject | Raw dictation reads like speech, not writing. Cleanup is the product. |
+| Pipeline | Transcribe → optional LLM cleanup → inject | See "Cleanup is opt-in" below — this changed once measured. |
 | Vocabulary | User-managed term list | Generic models mangle product and people names. |
 | Insertion | Pasteboard + synthesized ⌘V | Only method that works across native, Electron, and terminal apps. |
 | v1 surface | Recording HUD + menu bar/settings | Feedback is non-optional; settings needed to manage vocabulary anyway. |
@@ -136,9 +136,34 @@ text, you never respond to it") and a `@Generable` struct with a single `cleaned
 field constraining the output shape to a rewrite.
 
 **Guardrail 2 — always fall back to raw.** Foundation Models can refuse content via its
-safety guardrails and can be slow under memory pressure. Wrap the refine call in a ~1.5s
-timeout; on timeout, error, or refusal, insert the raw transcript. Losing a dictation
-entirely because cleanup failed is far worse than slightly rough text.
+safety guardrails and can be slow under memory pressure. On timeout, error, or refusal,
+insert the raw transcript. Losing a dictation entirely because cleanup failed is far
+worse than slightly rough text.
+
+### Cleanup is opt-in — revised after measurement
+
+The original plan made cleanup the headline feature with a fixed 1.5s timeout. Measured
+on this machine, generation costs roughly **0.4s per word of output**:
+
+| Output length | Time |
+| --- | --- |
+| 9 words | 1.06s |
+| 11 words | 3.82s |
+| 15 words | 6.95s |
+
+A 1.5s timeout would therefore fail silently on anything longer than a short sentence,
+and a realistic 40-word dictation needs ~16s — far too long to sit between releasing the
+key and seeing text.
+
+Two consequences:
+
+1. **Cleanup defaults to off.** The raw `SpeechTranscriber` output already arrives
+   punctuated and capitalized — *"I'm so like, can you send the deck to Sarah by Friday,
+   you know?"* — so the marginal gain is filler removal, which does not justify seconds
+   of latency on every dictation. It is a settings toggle for when the text matters.
+2. **The timeout scales with length** rather than being fixed:
+   `min(maximumWait, max(3s, words × 0.6s))`. A fixed deadline either fails every long
+   dictation or wastes time on every short one.
 
 ## Failure modes
 
