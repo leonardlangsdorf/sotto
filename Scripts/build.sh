@@ -23,8 +23,10 @@ pick_identity() {
         echo "$LOCAL_IDENTITY"
         return
     fi
+    # `|| true`: grep exits 1 when there is no identity, and with pipefail that
+    # would abort the whole script before it could fall back to ad-hoc.
     security find-identity -v -p codesigning 2>/dev/null \
-        | grep -oE '"[^"]+"' | head -1 | tr -d '"'
+        | grep -oE '"[^"]+"' | head -1 | tr -d '"' || true
 }
 
 IDENTITY="$(pick_identity)"
